@@ -1,0 +1,133 @@
+// prisma/schema.prisma
+// بوكس خاص (Box Khas) — مخطط قاعدة البيانات
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AuthProvider {
+  GOOGLE
+  EMAIL
+  PHONE
+}
+
+model User {
+  id            String   @id @default(cuid())
+  name          String?
+  email         String?  @unique
+  phone         String?  @unique
+  passwordHash  String?  // bcrypt hash — لا تُخزَّن كلمة المرور نصياً أبداً
+  image         String?
+  provider      AuthProvider @default(EMAIL)
+
+  isEmailVerified Boolean @default(false)
+  isPhoneVerified Boolean @default(false)
+
+  storageUsedBytes  BigInt   @default(0)
+  storageQuotaBytes BigInt   @default(5368709120) // 5 GB افتراضياً
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  files         File[]
+  folders       Folder[]
+  sharedLinks   SharedLink[]
+  otpCodes      OtpCode[]
+
+  @@index([email])
+  @@index([phone])
+}
+
+model Folder {
+  id            String   @id @default(cuid())
+  name          String
+  parentId      String?
+  parent        Folder?  @relation("FolderToFolder", fields: [parentId], references: [id], onDelete: Cascade)
+  children      Folder[] @relation("FolderToFolder")
+
+  ownerId       String
+  owner         User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  files         File[]
+  sharedLinks   SharedLink[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([ownerId])
+  @@index([parentId])
+}
+
+model File {
+  id              String   @id @default(cuid())
+  name            String
+  sizeBytes       BigInt
+  mimeType        String
+
+  // مسار الكائن داخل S3 (Key) وليس رابطاً مباشراً — يُستخدم لتوليد presigned URL عند الطلب
+  storageKey      String   @unique
+  isEncrypted     Boolean  @default(true)
+
+  folderId        String?
+  folder          Folder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  ownerId         String
+  owner           User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  sharedLinks     SharedLink[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([ownerId])
+  @@index([folderId])
+}
+
+model SharedLink {
+  id            String    @id @default(cuid())
+  token         String    @unique // الجزء الذي يظهر في الرابط العام
+
+  fileId        String?
+  file          File?     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  folderId      String?
+  folder        Folder?   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  ownerId       String
+  owner         User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  passwordHash  String?   // اختياري: حماية الرابط بكلمة سر
+  expiresAt     DateTime?
+  maxDownloads  Int?
+  downloadCount Int       @default(0)
+
+  createdAt     DateTime  @default(now())
+
+  @@index([token])
+  @@index([ownerId])
+}
+
+model OtpCode {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  codeHash    String   // يُخزَّن مُجزَّأً (hash) وليس نصياً
+  channel     String   // "email" | "phone"
+  destination String   // البريد أو رقم الهاتف المستهدف
+  purpose     String   // "verify" | "login" | "reset_password"
+
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  attempts    Int      @default(0)
+
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([destination])
+}
